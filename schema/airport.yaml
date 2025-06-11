@@ -1,0 +1,57 @@
+description: "Schema para dados de aeroportos"
+schema:
+  table_name: "airports"
+  fields:
+    - name: "id"
+      description: "ID do aeroporto"
+      type: "int"
+      required: true
+      editable: false
+
+    - name: "name"
+      description: "Nome do aeroporto"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "region_code"
+      description: "Código da região"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "latitude"
+      description: "Latitude do aeroporto"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "longitude"
+      description: "Longitude do aeroporto"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "gps_code"
+      description: "Código GPS do aeroporto"
+      type: "str"
+      required: true
+      editable: false
+    
+    - name: "country_code"
+      description: "Código do país"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "continent"
+      description: "Nome do continente"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "code"
+      description: "Código do aeroporto"
+      type: "str"
+      required: true
+      editable: false

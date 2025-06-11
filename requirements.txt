@@ -2,3 +2,4 @@ streamlit
 duckdb
 pyyaml
 boto3
+openpyxl

@@ -1,9 +1,11 @@
+from ._normalizer import normalize_column_name
+
 def validate_data(df, schema):
     """
     Validate the data against the schema.
 
     Args:
-        df: The dataframe to validate.
+        df: The dataframe to validate (with normalized column names).
         schema: The schema to validate against.
 
     Returns:
@@ -11,8 +13,9 @@ def validate_data(df, schema):
     """
     errors = []
 
-    expected_columns = [f["name"] for f in schema["schema"]["fields"]]
-    required_columns = [f["name"] for f in schema["schema"]["fields"] if f.get("required")]
+    # Normalize schema column names for comparison
+    expected_columns = [normalize_column_name(f["name"]) for f in schema["schema"]["fields"]]
+    required_columns = [normalize_column_name(f["name"]) for f in schema["schema"]["fields"] if f.get("required")]
 
     for col in required_columns:
         if col not in df.columns:
