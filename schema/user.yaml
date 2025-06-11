@@ -1,0 +1,38 @@
+schema:
+  table_name: "users"
+  fields:
+    - name: "id"
+      description: "ID do usuário"
+      type: "int"
+      required: true
+      editable: false
+
+    - name: "first_name"
+      description: "Nome do usuário"
+      type: "str"
+      required: true
+      editable: false
+
+    - name: "last_name"
+      description: "Sobrenome do usuário"
+      type: "str"
+      required: false
+      editable: false
+
+    - name: "email"
+      description: "Email do usuário"
+      type: "str"
+      required: false
+      editable: false
+
+    - name: "gender"
+      description: "Gênero do usuário"
+      type: "str"
+      required: false
+      editable: false
+      
+    - name: "ip_address"
+      description: "IP do usuário"
+      type: "str"
+      required: false
+      editable: false

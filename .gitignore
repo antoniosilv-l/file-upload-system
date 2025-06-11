@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+
+# Environment variables
+.env
+
+# Streamlit
+.streamlit/
+
+# DuckDB
+.duckdb/
