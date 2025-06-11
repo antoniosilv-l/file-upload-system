@@ -1,8 +1,8 @@
 import boto3
-import pandas as pd
 import duckdb
 from datetime import datetime
 from botocore.exceptions import ClientError, NoCredentialsError
+from typing import Dict, List, Any
 
 class S3HistoryManager:
     """Gerencia o histórico de uploads no S3 usando DuckDB"""
@@ -13,6 +13,7 @@ class S3HistoryManager:
         self.bucket_name = bucket_name
         self.region_name = region_name
         self.s3_client = None
+        self.conn = duckdb.connect(":memory:")
         
         try:
             self.s3_client = boto3.client(
@@ -24,7 +25,7 @@ class S3HistoryManager:
         except Exception as e:
             print(f"Erro ao conectar com S3: {str(e)}")
     
-    def get_upload_history(self, prefix="uploads/", limit=50):
+    def get_upload_history(self, prefix="uploads/", limit=50) -> List[Dict]:
         """
         Recupera o histórico de uploads usando DuckDB
         
@@ -33,11 +34,11 @@ class S3HistoryManager:
             limit (int): Número máximo de registros
             
         Returns:
-            pd.DataFrame: DataFrame com histórico de uploads
+            List[Dict]: Lista de dicionários com histórico de uploads
         """
         try:
             if self.s3_client is None:
-                return pd.DataFrame()
+                return []
             
             # Listar objetos no S3
             response = self.s3_client.list_objects_v2(
@@ -47,7 +48,7 @@ class S3HistoryManager:
             )
             
             if 'Contents' not in response:
-                return pd.DataFrame()
+                return []
             
             # Coletar dados dos arquivos
             files_data = []
@@ -64,7 +65,7 @@ class S3HistoryManager:
                         'file_key': obj['Key'],
                         'filename': obj['Key'].split('/')[-1],
                         'original_filename': metadata.get('original_filename', 'N/A'),
-                        'upload_date': obj['LastModified'],
+                        'upload_date': obj['LastModified'].isoformat(),
                         'file_size_bytes': obj['Size'],
                         'file_size_mb': round(obj['Size'] / (1024 * 1024), 2),
                         'schema_used': metadata.get('schema_used', 'N/A'),
@@ -80,7 +81,7 @@ class S3HistoryManager:
                         'file_key': obj['Key'],
                         'filename': obj['Key'].split('/')[-1],
                         'original_filename': 'N/A',
-                        'upload_date': obj['LastModified'],
+                        'upload_date': obj['LastModified'].isoformat(),
                         'file_size_bytes': obj['Size'],
                         'file_size_mb': round(obj['Size'] / (1024 * 1024), 2),
                         'schema_used': 'N/A',
@@ -91,16 +92,10 @@ class S3HistoryManager:
                     files_data.append(file_info)
             
             if not files_data:
-                return pd.DataFrame()
+                return []
             
             # Usar DuckDB para processar os dados
-            conn = duckdb.connect()
-            
-            # Criar DataFrame temporário
-            df_temp = pd.DataFrame(files_data)
-            
-            # Registrar DataFrame no DuckDB
-            conn.register('files_temp', df_temp)
+            self.conn.register('files_temp', files_data)
             
             # Query SQL para processar e ordenar os dados
             query = """
@@ -112,23 +107,30 @@ class S3HistoryManager:
                 schema_used,
                 row_count,
                 column_count,
-                file_key,
-                DATE_TRUNC('day', upload_date) as upload_day
+                file_key
             FROM files_temp
             ORDER BY upload_date DESC
             LIMIT ?
             """
             
-            result_df = conn.execute(query, [limit]).fetchdf()
-            conn.close()
+            result = self.conn.execute(query, [limit]).fetchall()
             
-            return result_df
+            # Converter resultado para lista de dicionários
+            columns = ['filename', 'original_filename', 'upload_date', 'file_size_mb', 
+                      'schema_used', 'row_count', 'column_count', 'file_key']
+            
+            result_list = []
+            for row in result:
+                row_dict = dict(zip(columns, row))
+                result_list.append(row_dict)
+            
+            return result_list
             
         except Exception as e:
             print(f"Erro ao recuperar histórico: {str(e)}")
-            return pd.DataFrame()
+            return []
     
-    def get_upload_statistics(self):
+    def get_upload_statistics(self) -> Dict[str, Any]:
         """
         Retorna estatísticas dos uploads usando DuckDB
         
@@ -137,9 +139,9 @@ class S3HistoryManager:
         """
         try:
             # Primeiro, obter todos os dados
-            history_df = self.get_upload_history(limit=1000)  # Buscar mais registros para estatísticas
+            history_list = self.get_upload_history(limit=1000)  # Buscar mais registros para estatísticas
             
-            if history_df.empty:
+            if not history_list:
                 return {
                     'total_files': 0,
                     'total_size_mb': 0,
@@ -150,21 +152,19 @@ class S3HistoryManager:
                 }
             
             # Usar DuckDB para calcular estatísticas
-            conn = duckdb.connect()
-            conn.register('history', history_df)
+            self.conn.register('history', history_list)
             
             # Estatísticas gerais
             stats_query = """
             SELECT 
                 COUNT(*) as total_files,
-                ROUND(SUM(file_size_mb), 2) as total_size_mb,
-                SUM(row_count) as total_rows,
-                ROUND(AVG(file_size_mb), 2) as avg_file_size_mb,
-                COUNT(CASE WHEN DATE(upload_date) = CURRENT_DATE THEN 1 END) as files_today
+                ROUND(SUM(CAST(file_size_mb AS DOUBLE)), 2) as total_size_mb,
+                SUM(CAST(row_count AS INTEGER)) as total_rows,
+                ROUND(AVG(CAST(file_size_mb AS DOUBLE)), 2) as avg_file_size_mb
             FROM history
             """
             
-            stats_result = conn.execute(stats_query).fetchone()
+            stats_result = self.conn.execute(stats_query).fetchone()
             
             # Schemas mais usados
             schemas_query = """
@@ -178,16 +178,14 @@ class S3HistoryManager:
             LIMIT 5
             """
             
-            schemas_result = conn.execute(schemas_query).fetchall()
-            
-            conn.close()
+            schemas_result = self.conn.execute(schemas_query).fetchall()
             
             statistics = {
                 'total_files': int(stats_result[0]) if stats_result[0] else 0,
                 'total_size_mb': float(stats_result[1]) if stats_result[1] else 0.0,
                 'total_rows': int(stats_result[2]) if stats_result[2] else 0,
                 'avg_file_size_mb': float(stats_result[3]) if stats_result[3] else 0.0,
-                'files_today': int(stats_result[4]) if stats_result[4] else 0,
+                'files_today': 0,  # Simplificado - pode ser implementado depois se necessário
                 'schemas_used': [{'schema': row[0], 'count': row[1]} for row in schemas_result]
             }
             
@@ -204,71 +202,82 @@ class S3HistoryManager:
                 'schemas_used': []
             }
     
-    def get_uploads_by_date(self, days=30):
+    def get_uploads_by_date(self, days=30) -> List[Dict]:
         """
-        Retorna uploads agrupados por data usando DuckDB
+        Obtém uploads agrupados por data
         
         Args:
-            days (int): Número de dias para analisar
+            days (int): Número de dias para incluir
             
         Returns:
-            pd.DataFrame: DataFrame com uploads por data
+            List[Dict]: Lista com uploads por data
         """
         try:
-            history_df = self.get_upload_history(limit=1000)
+            history_list = self.get_upload_history(limit=1000)
             
-            if history_df.empty:
-                return pd.DataFrame()
+            if not history_list:
+                return []
             
-            conn = duckdb.connect()
-            conn.register('history', history_df)
+            self.conn.register('history', history_list)
             
+            # Query para agrupar por data
             query = """
             SELECT 
-                DATE(upload_date) as date,
+                DATE(upload_date) as upload_day,
                 COUNT(*) as files_count,
-                ROUND(SUM(file_size_mb), 2) as total_size_mb,
-                SUM(row_count) as total_rows
+                ROUND(SUM(CAST(file_size_mb AS DOUBLE)), 2) as total_size_mb
             FROM history
             WHERE upload_date >= CURRENT_DATE - INTERVAL ? DAYS
             GROUP BY DATE(upload_date)
-            ORDER BY date DESC
+            ORDER BY upload_day DESC
             """
             
-            result_df = conn.execute(query, [days]).fetchdf()
-            conn.close()
+            result = self.conn.execute(query, [days]).fetchall()
             
-            return result_df
+            return [
+                {
+                    'upload_day': row[0],
+                    'files_count': row[1],
+                    'total_size_mb': row[2]
+                }
+                for row in result
+            ]
             
         except Exception as e:
-            print(f"Erro ao agrupar uploads por data: {str(e)}")
-            return pd.DataFrame()
+            print(f"Erro ao obter uploads por data: {str(e)}")
+            return []
     
-    def search_files(self, search_term, limit=20):
+    def search_files(self, search_term: str, limit=20) -> List[Dict]:
         """
-        Busca arquivos por nome usando DuckDB
+        Busca arquivos por termo
         
         Args:
             search_term (str): Termo de busca
             limit (int): Limite de resultados
             
         Returns:
-            pd.DataFrame: DataFrame com resultados da busca
+            List[Dict]: Lista de arquivos encontrados
         """
         try:
-            history_df = self.get_upload_history(limit=500)
+            history_list = self.get_upload_history(limit=500)
             
-            if history_df.empty:
-                return pd.DataFrame()
+            if not history_list:
+                return []
             
-            conn = duckdb.connect()
-            conn.register('history', history_df)
+            self.conn.register('history', history_list)
             
+            # Query de busca
             query = """
-            SELECT *
+            SELECT 
+                filename,
+                original_filename,
+                upload_date,
+                file_size_mb,
+                schema_used,
+                file_key
             FROM history
             WHERE 
-                LOWER(filename) LIKE LOWER(?) OR
+                LOWER(filename) LIKE LOWER(?) OR 
                 LOWER(original_filename) LIKE LOWER(?) OR
                 LOWER(schema_used) LIKE LOWER(?)
             ORDER BY upload_date DESC
@@ -276,28 +285,38 @@ class S3HistoryManager:
             """
             
             search_pattern = f"%{search_term}%"
-            result_df = conn.execute(query, [search_pattern, search_pattern, search_pattern, limit]).fetchdf()
-            conn.close()
+            result = self.conn.execute(query, [search_pattern, search_pattern, search_pattern, limit]).fetchall()
             
-            return result_df
+            columns = ['filename', 'original_filename', 'upload_date', 'file_size_mb', 'schema_used', 'file_key']
+            
+            return [dict(zip(columns, row)) for row in result]
             
         except Exception as e:
-            print(f"Erro na busca: {str(e)}")
-            return pd.DataFrame()
+            print(f"Erro ao buscar arquivos: {str(e)}")
+            return []
     
-    def test_connection(self):
+    def test_connection(self) -> tuple:
         """
-        Testa a conexão com S3
+        Testa conexão com S3
         
         Returns:
-            bool: True se conectado, False caso contrário
+            tuple: (success, message)
         """
         try:
             if self.s3_client is None:
-                return False
+                return False, "Cliente S3 não inicializado"
             
-            self.s3_client.head_bucket(Bucket=self.bucket_name)
-            return True
+            # Tentar listar objetos como teste
+            self.s3_client.list_objects_v2(Bucket=self.bucket_name, MaxKeys=1)
+            return True, "Conexão estabelecida com sucesso"
             
-        except Exception:
-            return False 
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchBucket':
+                return False, f"Bucket '{self.bucket_name}' não encontrado"
+            elif error_code in ['AccessDenied', 'Forbidden']:
+                return False, "Acesso negado. Verifique as permissões"
+            else:
+                return False, f"Erro AWS: {e.response['Error']['Message']}"
+        except Exception as e:
+            return False, f"Erro de conexão: {str(e)}" 

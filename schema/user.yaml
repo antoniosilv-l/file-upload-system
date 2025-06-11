@@ -1,4 +1,6 @@
 description: "Schema alternativo para dados de usuários"
+subject: "sistema"
+sub_subject: "usuarios"
 schema:
   table_name: "users"
   fields:
@@ -37,3 +39,9 @@ schema:
       type: "str"
       required: false
       editable: false
+
+    - name: "is_active"
+      description: "Se o usuário está ativo"
+      type: "bool"
+      required: false
+      editable: true

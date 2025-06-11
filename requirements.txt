@@ -1,4 +1,7 @@
 streamlit
+openpyxl
 duckdb
 pyyaml
 boto3
+botocore
+python-dotenv
