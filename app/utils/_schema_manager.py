@@ -1,96 +1,86 @@
+import yaml
 import os
-import glob
-from ._schema_loader import load_schema
+from pathlib import Path
 
-def get_available_schemas():
-    """
-    Get all available schema files and organize them by category.
+class SchemaManager:
+    """Gerencia os schemas YAML para validação de dados"""
     
-    Returns:
-        Dictionary with available schemas organized by subject/sub-subject
-    """
-    schema_files = glob.glob("schema/*.yaml") + glob.glob("schema/*.yml")
+    def __init__(self, schema_dir="schema"):
+        self.schema_dir = Path(schema_dir)
+        
+    def list_schemas(self):
+        """Lista todos os arquivos de schema disponíveis"""
+        if not self.schema_dir.exists():
+            return []
+            
+        schemas = []
+        for file_path in self.schema_dir.glob("*.yaml"):
+            schemas.append(file_path.name)
+            
+        return sorted(schemas)
     
-    schemas = {}
-    for schema_file in schema_files:
+    def load_schema(self, schema_name):
+        """Carrega um schema específico"""
         try:
-            schema = load_schema(schema_file)
-            filename = os.path.basename(schema_file)
+            schema_path = self.schema_dir / schema_name
             
-            # Extract schema info
-            schema_info = {
-                'file': schema_file,
-                'filename': filename,
-                'table_name': schema.get('schema', {}).get('table_name', filename.replace('.yaml', '').replace('.yml', '')),
-                'description': schema.get('description', f"Schema para {filename}"),
-                'fields_count': len(schema.get('schema', {}).get('fields', []))
-            }
-            
-            schemas[filename] = schema_info
+            if not schema_path.exists():
+                raise FileNotFoundError(f"Schema não encontrado: {schema_name}")
+                
+            with open(schema_path, 'r', encoding='utf-8') as file:
+                schema_data = yaml.safe_load(file)
+                
+            return schema_data
             
         except Exception as e:
-            print(f"Erro ao carregar schema {schema_file}: {e}")
+            print(f"Erro ao carregar schema {schema_name}: {str(e)}")
+            return None
     
-    return schemas
-
-def get_schemas_by_category(assunto, sub_assunto):
-    """
-    Get schemas that might be relevant for the given subject/sub-subject.
-    
-    Args:
-        assunto: The main subject
-        sub_assunto: The sub-subject
+    def get_schema_info(self, schema_name):
+        """Retorna informações básicas sobre um schema"""
+        schema_data = self.load_schema(schema_name)
         
-    Returns:
-        List of relevant schema options
-    """
-    all_schemas = get_available_schemas()
-    
-    # Schema mapping based on subject/sub-subject
-    schema_mapping = {
-        "usuarios": {
-            "cadastro": ["user.yaml", "usuarios.yaml", "clientes.yaml"],
-        },
-        "locais": {
-            "aeroportos": ["aeroportos.yaml", "locations.yaml", "places.yaml"],
-        },
-        "produtos": {
-            "catalogo": ["products.yaml", "produtos.yaml"],
-            "estoque": ["inventory.yaml", "estoque.yaml"],
-        },
-        "vendas": {
-            "transacoes": ["sales.yaml", "vendas.yaml", "transactions.yaml"],
-            "leads": ["leads.yaml", "prospects.yaml"],
+        if not schema_data:
+            return None
+            
+        info = {
+            'name': schema_name,
+            'description': schema_data.get('description', 'Sem descrição'),
+            'table_name': schema_data.get('schema', {}).get('table_name', 'N/A'),
+            'fields_count': len(schema_data.get('schema', {}).get('fields', [])),
+            'required_fields': len([
+                field for field in schema_data.get('schema', {}).get('fields', [])
+                if field.get('required', False)
+            ])
         }
-    }
-    
-    # Normalize keys for lookup
-    assunto_key = assunto.lower().replace(' ', '_')
-    sub_assunto_key = sub_assunto.lower().replace(' ', '_')
-    
-    # Get relevant schemas for this category
-    relevant_schemas = []
-    
-    if assunto_key in schema_mapping and sub_assunto_key in schema_mapping[assunto_key]:
-        schema_files = schema_mapping[assunto_key][sub_assunto_key]
-        for schema_file in schema_files:
-            if schema_file in all_schemas:
-                relevant_schemas.append(all_schemas[schema_file])
-    
-    # If no specific schemas found, return all available schemas
-    if not relevant_schemas:
-        relevant_schemas = list(all_schemas.values())
-    
-    return relevant_schemas
-
-def format_schema_option(schema_info):
-    """
-    Format schema information for display in dropdown.
-    
-    Args:
-        schema_info: Schema information dictionary
         
-    Returns:
-        Formatted string for dropdown display
-    """
-    return f"{schema_info['table_name']} ({schema_info['fields_count']} campos) - {schema_info['filename']}" 
+        return info
+    
+    def validate_schema_structure(self, schema_data):
+        """Valida se um schema tem a estrutura correta"""
+        if not isinstance(schema_data, dict):
+            return False, "Schema deve ser um dicionário"
+            
+        if 'schema' not in schema_data:
+            return False, "Schema deve conter a chave 'schema'"
+            
+        schema_content = schema_data['schema']
+        
+        if 'fields' not in schema_content:
+            return False, "Schema deve conter 'fields'"
+            
+        if not isinstance(schema_content['fields'], list):
+            return False, "'fields' deve ser uma lista"
+            
+        # Validar cada campo
+        for i, field in enumerate(schema_content['fields']):
+            if not isinstance(field, dict):
+                return False, f"Campo {i} deve ser um dicionário"
+                
+            if 'name' not in field:
+                return False, f"Campo {i} deve ter 'name'"
+                
+            if 'type' not in field:
+                return False, f"Campo {i} deve ter 'type'"
+                
+        return True, "Schema válido" 

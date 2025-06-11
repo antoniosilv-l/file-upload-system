@@ -1,3 +1,4 @@
+description: "Schema alternativo para dados de usuários"
 schema:
   table_name: "users"
   fields:

@@ -1,0 +1,79 @@
+description: "Schema para dados de aeroportos"
+schema:
+  table_name: "aeroportos"
+  fields:
+    - name: "id"
+      description: "ID do aeroporto"
+      type: "int"
+      required: true
+      editable: false
+
+    - name: "nome"
+      description: "Nome do aeroporto"
+      type: "str"
+      required: true
+      editable: true
+      min_length: 3
+      max_length: 100
+
+    - name: "codigo_iata"
+      description: "Código IATA do aeroporto"
+      type: "str"
+      required: true
+      editable: true
+      min_length: 3
+      max_length: 3
+
+    - name: "codigo_icao"
+      description: "Código ICAO do aeroporto"
+      type: "str"
+      required: false
+      editable: true
+      min_length: 4
+      max_length: 4
+
+    - name: "cidade"
+      description: "Cidade onde está localizado o aeroporto"
+      type: "str"
+      required: true
+      editable: true
+      min_length: 2
+      max_length: 50
+
+    - name: "pais"
+      description: "País onde está localizado o aeroporto"
+      type: "str"
+      required: true
+      editable: true
+      min_length: 2
+      max_length: 50
+
+    - name: "latitude"
+      description: "Latitude do aeroporto"
+      type: "float"
+      required: false
+      editable: true
+      min_value: -90
+      max_value: 90
+
+    - name: "longitude"
+      description: "Longitude do aeroporto"
+      type: "float"
+      required: false
+      editable: true
+      min_value: -180
+      max_value: 180
+
+    - name: "altitude"
+      description: "Altitude do aeroporto em metros"
+      type: "int"
+      required: false
+      editable: true
+      min_value: -500
+      max_value: 5000
+
+    - name: "ativo"
+      description: "Se o aeroporto está ativo"
+      type: "bool"
+      required: false
+      editable: true 

@@ -1,223 +1,223 @@
 import streamlit as st
-from utils._schema_loader import load_schema
-from utils._previewer import preview_file, get_excel_sheet_names
-from utils._validator import validate_data
-from utils._uploader import upload_to_s3
-from utils._s3_history import display_upload_history, refresh_upload_history
-from utils._schema_manager import get_schemas_by_category, format_schema_option
+import pandas as pd
+import yaml
+import os
+from utils._schema_manager import SchemaManager
+from utils._validator import DataValidator
+from utils._previewer import DataPreviewer
+from utils._uploader import DataUploader
+from utils._s3_history import S3HistoryManager
+from utils._normalizer import ColumnNormalizer
 
-st.set_page_config(page_title="Upload de Arquivos - Data Platform", layout="wide")
+def main():
+    st.set_page_config(
+        page_title="Sistema de Upload de Arquivos",
+        page_icon="📁",
+        layout="wide"
+    )
+    
+    st.title("📁 Sistema de Upload de Arquivos")
+    st.markdown("Upload e validação de arquivos CSV/Excel com schemas configuráveis")
+    
+    # Sidebar para configurações
+    with st.sidebar:
+        st.header("⚙️ Configurações")
+        
+        # Schema selection
+        schema_manager = SchemaManager()
+        schemas = schema_manager.list_schemas()
+        
+        if not schemas:
+            st.error("Nenhum schema encontrado na pasta 'schema/'")
+            return
+            
+        selected_schema = st.selectbox(
+            "Selecione o Schema:",
+            options=schemas,
+            format_func=lambda x: x.replace('.yaml', '').replace('_', ' ').title()
+        )
+        
+        # S3 Configuration
+        st.subheader("🗄️ Configuração S3")
+        aws_access_key = st.text_input("AWS Access Key", type="password")
+        aws_secret_key = st.text_input("AWS Secret Key", type="password") 
+        bucket_name = st.text_input("Bucket Name", value="meu-bucket-dados")
+        aws_region = st.text_input("AWS Region", value="us-east-1")
 
-menu = st.sidebar.selectbox("📂 Menu", ["Upload de Arquivo"])
-
-if menu == "Upload de Arquivo":
-    st.title("📁 Upload de Arquivos")
-
-    schema = load_schema("schema/user.yaml")
-
-    # Dropdowns para seleção de assunto e sub-assunto
-    st.subheader("🗂️ Categorização dos Dados")
-    col1, col2 = st.columns(2)
+    # Main content area
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        assunto = st.selectbox(
-            "Assunto",
-            ["Usuários", "Locais"],
-            help="Selecione o assunto principal dos dados"
+        st.header("📤 Upload de Arquivo")
+        
+        # File upload
+        uploaded_file = st.file_uploader(
+            "Escolha um arquivo CSV ou Excel",
+            type=['csv', 'xlsx', 'xls'],
+            help="Formatos suportados: CSV, Excel (.xlsx, .xls)"
         )
+        
+        if uploaded_file is not None:
+            # Load schema
+            schema_data = schema_manager.load_schema(selected_schema)
+            if not schema_data:
+                st.error(f"Erro ao carregar schema: {selected_schema}")
+                return
+                
+            # Preview file
+            previewer = DataPreviewer()
+            df = previewer.preview_file(uploaded_file)
+            
+            if df is not None:
+                st.subheader("👀 Preview dos Dados")
+                st.dataframe(df.head(10), use_container_width=True)
+                
+                st.info(f"📊 **Informações do arquivo:**\n"
+                       f"- Linhas: {len(df):,}\n"
+                       f"- Colunas: {len(df.columns):,}\n"
+                       f"- Tamanho: {uploaded_file.size:,} bytes")
+                
+                # Normalize columns
+                normalizer = ColumnNormalizer()
+                original_columns = df.columns.tolist()
+                df_normalized = normalizer.normalize_dataframe(df)
+                
+                if original_columns != df_normalized.columns.tolist():
+                    st.subheader("🔄 Normalização de Colunas")
+                    col_mapping = dict(zip(original_columns, df_normalized.columns.tolist()))
+                    
+                    mapping_df = pd.DataFrame([
+                        {"Coluna Original": orig, "Coluna Normalizada": norm}
+                        for orig, norm in col_mapping.items()
+                    ])
+                    st.dataframe(mapping_df, use_container_width=True)
+                
+                # Validate data
+                validator = DataValidator()
+                is_valid, validation_report = validator.validate_data(df_normalized, schema_data)
+                
+                st.subheader("✅ Validação dos Dados")
+                
+                if is_valid:
+                    st.success("✅ Dados válidos! Pronto para upload.")
+                    
+                    # Upload section
+                    if st.button("🚀 Fazer Upload para S3", type="primary"):
+                        if all([aws_access_key, aws_secret_key, bucket_name]):
+                            uploader = DataUploader(
+                                aws_access_key=aws_access_key,
+                                aws_secret_key=aws_secret_key,
+                                bucket_name=bucket_name,
+                                region_name=aws_region
+                            )
+                            
+                            with st.spinner("Fazendo upload..."):
+                                success, message = uploader.upload_to_s3(
+                                    df_normalized, 
+                                    uploaded_file.name,
+                                    schema_data
+                                )
+                                
+                            if success:
+                                st.success(f"✅ {message}")
+                                st.rerun()  # Refresh to update history
+                            else:
+                                st.error(f"❌ {message}")
+                        else:
+                            st.error("⚠️ Por favor, configure todas as credenciais do S3")
+                            
+                else:
+                    st.error("❌ Dados inválidos. Verifique os erros abaixo:")
+                    
+                    for column, errors in validation_report.items():
+                        if errors:
+                            st.error(f"**{column}**: {', '.join(errors)}")
+                    
+                    # Allow schema selection for invalid data
+                    st.subheader("🔧 Tentar com outro Schema")
+                    st.info("Os dados não passaram na validação. Você pode tentar com um schema diferente:")
+                    
+                    alternative_schemas = [s for s in schemas if s != selected_schema]
+                    if alternative_schemas:
+                        alternative_schema = st.selectbox(
+                            "Selecione um schema alternativo:",
+                            options=alternative_schemas,
+                            format_func=lambda x: x.replace('.yaml', '').replace('_', ' ').title(),
+                            key="alternative_schema"
+                        )
+                        
+                        if st.button("🔄 Validar com Schema Alternativo"):
+                            alt_schema_data = schema_manager.load_schema(alternative_schema)
+                            if alt_schema_data:
+                                alt_is_valid, alt_validation_report = validator.validate_data(df_normalized, alt_schema_data)
+                                
+                                if alt_is_valid:
+                                    st.success(f"✅ Dados válidos com o schema '{alternative_schema}'!")
+                                    
+                                    if st.button("🚀 Upload com Schema Alternativo", type="primary", key="alt_upload"):
+                                        if all([aws_access_key, aws_secret_key, bucket_name]):
+                                            uploader = DataUploader(
+                                                aws_access_key=aws_access_key,
+                                                aws_secret_key=aws_secret_key,
+                                                bucket_name=bucket_name,
+                                                region_name=aws_region
+                                            )
+                                            
+                                            with st.spinner("Fazendo upload..."):
+                                                success, message = uploader.upload_to_s3(
+                                                    df_normalized, 
+                                                    uploaded_file.name,
+                                                    alt_schema_data
+                                                )
+                                                
+                                            if success:
+                                                st.success(f"✅ {message}")
+                                                st.rerun()
+                                            else:
+                                                st.error(f"❌ {message}")
+                                        else:
+                                            st.error("⚠️ Configure as credenciais do S3")
+                                else:
+                                    st.error(f"❌ Dados também inválidos com o schema '{alternative_schema}'")
+                                    for column, errors in alt_validation_report.items():
+                                        if errors:
+                                            st.error(f"**{column}**: {', '.join(errors)}")
     
     with col2:
-        # Sub-assuntos baseados no assunto selecionado
-        sub_assuntos_map = {
-            "Usuários": ["Cadastro"],
-            "Locais": ["Aeroportos"]
-        }
+        st.header("📜 Histórico de Uploads")
         
-        sub_assunto = st.selectbox(
-            "Sub-Assunto",
-            sub_assuntos_map.get(assunto, ["Geral"]),
-            help="Selecione o sub-assunto específico"
-        )
-
-    uploaded_file = st.file_uploader("Selecione um arquivo CSV ou Excel", type=["csv", "xlsx"])
-
-    if uploaded_file:
-        file_extension = uploaded_file.name.lower().split('.')[-1]
-        
-        st.subheader("⚙️ Configurações de Leitura")
-        with st.expander("Mostrar/ocultar configurações", expanded=True):
+        if all([aws_access_key, aws_secret_key, bucket_name]):
+            history_manager = S3HistoryManager(
+                aws_access_key=aws_access_key,
+                aws_secret_key=aws_secret_key,
+                bucket_name=bucket_name,
+                region_name=aws_region
+            )
             
-            if file_extension in ['xlsx', 'xls']:
-                # Excel file configurations
-                st.info(f"📊 Arquivo Excel detectado: **{uploaded_file.name}**")
+            with st.spinner("Carregando histórico..."):
+                history_df = history_manager.get_upload_history()
+            
+            if history_df is not None and not history_df.empty:
+                st.dataframe(
+                    history_df,
+                    use_container_width=True,
+                    column_config={
+                        "upload_date": st.column_config.DatetimeColumn(
+                            "Data Upload",
+                            format="DD/MM/YYYY HH:mm"
+                        ),
+                        "file_size_mb": st.column_config.NumberColumn(
+                            "Tamanho (MB)",
+                            format="%.2f MB"
+                        )
+                    }
+                )
                 
-                # Get sheet names
-                sheet_names = get_excel_sheet_names(uploaded_file)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if sheet_names:
-                        sheet_name = st.selectbox("Selecione a aba", sheet_names)
-                    else:
-                        sheet_name = None
-                        st.warning("Não foi possível detectar as abas da planilha.")
-                
-                with col2:
-                    header_row = st.number_input("Linha do cabeçalho (0-indexada)", min_value=0, value=0)
-                
-                sep = ","  # Not used for Excel files
-                
+                st.info(f"📊 **Total de arquivos**: {len(history_df)}")
             else:
-                # CSV file configurations
-                st.info(f"📄 Arquivo CSV detectado: **{uploaded_file.name}**")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    sep = st.text_input("Separador de colunas", value=",")
-                with col2:
-                    header_row = st.number_input("Linha do cabeçalho (0-indexada)", min_value=0, value=0)
-                
-                sheet_name = None  # Not used for CSV files
+                st.info("Nenhum arquivo encontrado no histórico")
+        else:
+            st.info("Configure as credenciais do S3 para ver o histórico")
 
-        try:
-            df_preview, file_info = preview_file(uploaded_file, sep, header_row, sheet_name)
-
-            st.subheader("👁️ Pré-visualização dos dados")
-            col_df, col_info = st.columns([3, 1])
-            with col_df:
-                with st.expander("📋 Dados (amostra de 10 linhas)", expanded=True):
-                    st.dataframe(df_preview, use_container_width=True)
-
-            with col_info:
-                with st.expander("ℹ️ Informações Técnicas", expanded=True):
-                    st.write(f"**Tipo de Arquivo:** `{file_info['tipo_arquivo']}`")
-                    
-                    if file_extension in ['xlsx', 'xls'] and sheet_name:
-                        st.write(f"**Aba Selecionada:** `{sheet_name}`")
-                    
-                    st.write("**Colunas Originais**")
-                    st.write(file_info["colunas_detectadas"])
-                    
-                    st.write("**Colunas Normalizadas**")
-                    st.write(file_info["colunas_normalizadas"])
-                    
-                    st.write("**Tipos por Coluna**")
-                    st.json(file_info["colunas_com_tipos"], expanded=False)
-
-                    st.write(f"**Total Estimado de Linhas:** `{file_info['total_linhas_estimado']}`")
-                
-                with st.expander("🔄 Mapeamento de Colunas", expanded=False):
-                    st.write("**Transformações aplicadas:**")
-                    for original, normalizada in file_info["mapeamento_colunas"].items():
-                        st.write(f"`{original}` → `{normalizada}`")
-
-            # 🛡️ Validação
-            st.subheader("🛡️ Validação dos Dados")
-            
-            # Initialize session state for schema selection
-            if 'selected_schema' not in st.session_state:
-                st.session_state.selected_schema = schema
-            if 'schema_validation_failed' not in st.session_state:
-                st.session_state.schema_validation_failed = False
-            
-            # Validate with current schema
-            current_schema = st.session_state.selected_schema
-            errors = validate_data(df_preview, current_schema)
-            
-            if errors:
-                st.error("Foram encontrados erros no arquivo:")
-                for err in errors:
-                    st.write(f"- {err}")
-                
-                # Show schema selection if validation failed
-                st.warning("⚠️ O schema padrão não é compatível com seus dados.")
-                
-                # Get available schemas for this category
-                available_schemas = get_schemas_by_category(assunto, sub_assunto)
-                
-                if available_schemas:
-                    st.subheader("🔄 Seleção de Schema Alternativo")
-                    st.info(f"Schemas sugeridos para **{assunto} > {sub_assunto}**:")
-                    
-                    # Create schema options for dropdown
-                    schema_options = {}
-                    schema_display_names = []
-                    
-                    for schema_info in available_schemas:
-                        display_name = format_schema_option(schema_info)
-                        schema_options[display_name] = schema_info
-                        schema_display_names.append(display_name)
-                    
-                    # Schema selection dropdown
-                    selected_schema_display = st.selectbox(
-                        "Escolha um schema compatível:",
-                        schema_display_names,
-                        help="Selecione o schema que melhor se adequa aos seus dados"
-                    )
-                    
-                    if st.button("🔍 Testar Schema Selecionado"):
-                        selected_schema_info = schema_options[selected_schema_display]
-                        try:
-                            new_schema = load_schema(selected_schema_info['file'])
-                            new_errors = validate_data(df_preview, new_schema)
-                            
-                            if new_errors:
-                                st.error("❌ Schema selecionado também apresenta erros:")
-                                for err in new_errors:
-                                    st.write(f"- {err}")
-                            else:
-                                st.success("✅ Schema selecionado é compatível!")
-                                st.session_state.selected_schema = new_schema
-                                st.session_state.schema_validation_failed = False
-                                st.rerun()
-                                
-                        except Exception as e:
-                            st.error(f"Erro ao carregar schema: {e}")
-                else:
-                    st.info("Nenhum schema alternativo disponível para esta categoria.")
-                    
-            else:
-                st.success("✅ Arquivo válido de acordo com o schema")
-                
-                # Show which schema is being used
-                schema_name = current_schema.get('schema', {}).get('table_name', 'schema padrão')
-                st.info(f"📋 Usando schema: **{schema_name}**")
-                
-                # Mostrar o caminho onde o arquivo será salvo
-                from datetime import datetime
-                import os
-                upload_date = datetime.now().strftime("%Y-%m-%d")
-                from utils._normalizer import normalize_column_name
-                assunto_norm = normalize_column_name(assunto)
-                sub_assunto_norm = normalize_column_name(sub_assunto)
-                
-                # Always show as .csv extension
-                base_filename = os.path.splitext(uploaded_file.name)[0]
-                csv_filename = f"{base_filename}.csv"
-                st.info(f"**Caminho no S3:** `{assunto_norm}/{sub_assunto_norm}/{upload_date}/{csv_filename}`")
-                st.success("ℹ️ O arquivo será convertido para formato CSV antes do upload.")
-                
-                if st.button("📤 Enviar para o S3"):
-                    with st.spinner('Processando e enviando arquivo...'):
-                        # Get the complete dataframe for upload
-                        df_complete, _ = preview_file(uploaded_file, sep, header_row, sheet_name, full_data=True)
-                        
-                        # Upload the processed dataframe as CSV
-                        upload_to_s3(df_complete, uploaded_file.name, assunto, sub_assunto)
-                        
-                        # Refresh upload history to show the new file
-                        refresh_upload_history()
-                        
-                    st.success("✅ Upload realizado com sucesso! Arquivo convertido para CSV.")
-                    st.info("📊 Histórico de uploads atualizado abaixo.")
-                    
-                    # Reset schema selection for next upload
-                    st.session_state.selected_schema = schema
-                    st.session_state.schema_validation_failed = False
-
-        except Exception as e:
-            st.error(f"Erro ao processar o arquivo: {e}")
-
-
-st.markdown("---")
-display_upload_history()
+if __name__ == "__main__":
+    main() 
