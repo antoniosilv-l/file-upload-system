@@ -1,10 +1,14 @@
+"""
+Página principal da aplicação - Upload de Arquivos
+"""
+
 import streamlit as st
 import sys
 import os
 
 # Configuração de paths
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if '__file__' in globals() else os.getcwd())
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else 'app')
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + '/app' if '__file__' in globals() else 'app')
 
 # Imports dos serviços
 from app.services.validation_service import ValidationService
@@ -328,4 +332,4 @@ if menu == "Upload de Arquivo":
 
 elif menu == "Athena & Tabelas":
     # Renderizar página do Athena com usuário logado
-    render_athena_page(current_user=current_user)
+    render_athena_page(current_user=current_user) 

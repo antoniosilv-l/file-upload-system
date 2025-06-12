@@ -9,9 +9,10 @@ import time
 class AthenaPageComponent:
     """Componente da página Athena para edição de tabelas"""
     
-    def __init__(self):
+    def __init__(self, current_user=None):
         self.athena_service = AthenaService()
         self.conn = duckdb.connect(":memory:")
+        self.current_user = current_user
     
     def render(self):
         """Renderiza a página do Athena com design moderno"""
@@ -679,9 +680,14 @@ class AthenaPageComponent:
             st.warning("⚠️ No data to save")
             return
         
+        # Obter nome do usuário
+        user_name = "unknown_user"
+        if self.current_user:
+            user_name = f"{self.current_user.username} ({self.current_user.full_name})"
+        
         with st.spinner("Saving changes to audit log..."):
             success, message = self.athena_service.save_table_changes(
-                database, table, original_data, edited_data, "streamlit_user"
+                database, table, original_data, edited_data, user_name
             )
             
             if success:
@@ -772,7 +778,7 @@ class AthenaPageComponent:
                 st.warning("No data to export")
 
 
-def render_athena_page():
+def render_athena_page(current_user=None):
     """Função para renderizar a página do Athena"""
-    athena_page = AthenaPageComponent()
+    athena_page = AthenaPageComponent(current_user)
     athena_page.render() 
