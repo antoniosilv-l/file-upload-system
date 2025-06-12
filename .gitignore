@@ -1,0 +1,17 @@
+# Python
+.venv
+
+# Secrets
+.env
+
+# IDEs
+.vscode
+.idea
+
+# Cache
+__pycache__
+.pytest_cache
+.ruff_cache
+
+# Streamlit
+.streamlit
